@@ -1,0 +1,1287 @@
+{
+  "nbformat": 4,
+  "nbformat_minor": 0,
+  "metadata": {
+    "colab": {
+      "provenance": [],
+      "collapsed_sections": [],
+      "authorship_tag": "ABX9TyP3XxDRAOHa3b4lTFmozyQz"
+    },
+    "kernelspec": {
+      "name": "python3",
+      "display_name": "Python 3"
+    },
+    "language_info": {
+      "name": "python"
+    },
+    "accelerator": "GPU",
+    "gpuClass": "standard"
+  },
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Downloading the Flickr Dataset from Kaggle"
+      ],
+      "metadata": {
+        "id": "qy4Rv3q79XrI"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "from google.colab import files"
+      ],
+      "metadata": {
+        "id": "O51DuZwR9XTJ"
+      },
+      "execution_count": 1,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "files.upload()"
+      ],
+      "metadata": {
+        "id": "Oy9IltHu9Vw9"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "! mkdir ~/.kaggle"
+      ],
+      "metadata": {
+        "id": "poCiKt6N9Vta"
+      },
+      "execution_count": 3,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "!cp kaggle.json ~/.kaggle/"
+      ],
+      "metadata": {
+        "id": "LIvhWyAn9Vq0"
+      },
+      "execution_count": 4,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "! chmod 600 ~/.kaggle/kaggle.json"
+      ],
+      "metadata": {
+        "id": "8iC__kPk9VoH"
+      },
+      "execution_count": 5,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "!kaggle datasets download -d aladdinpersson/flickr8kimagescaptions"
+      ],
+      "metadata": {
+        "id": "BtWuDNZFuz9K"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "!unzip flickr8kimagescaptions.zip"
+      ],
+      "metadata": {
+        "id": "MVzcshVPEA8o"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "!wget https://raw.githubusercontent.com/aladdinpersson/Machine-Learning-Collection/master/ML/Pytorch/more_advanced/image_captioning/test_examples/boat.png\n",
+        "!wget https://raw.githubusercontent.com/aladdinpersson/Machine-Learning-Collection/master/ML/Pytorch/more_advanced/image_captioning/test_examples/bus.png\n",
+        "!wget https://raw.githubusercontent.com/aladdinpersson/Machine-Learning-Collection/master/ML/Pytorch/more_advanced/image_captioning/test_examples/child.jpg\n",
+        "!wget https://raw.githubusercontent.com/aladdinpersson/Machine-Learning-Collection/master/ML/Pytorch/more_advanced/image_captioning/test_examples/dog.jpg\n",
+        "!wget https://raw.githubusercontent.com/aladdinpersson/Machine-Learning-Collection/master/ML/Pytorch/more_advanced/image_captioning/test_examples/horse.png"
+      ],
+      "metadata": {
+        "id": "vWtMn75htcTG"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Creating a Dataloader for loading the FLICKR 8k dataset and preparing it for training and testing"
+      ],
+      "metadata": {
+        "id": "dDh9td2f-Im3"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import os\n",
+        "import pandas as pd\n",
+        "import spacy\n",
+        "import torch\n",
+        "from torch.nn.utils.rnn import pad_sequence\n",
+        "from torch.utils.data import DataLoader, Dataset\n",
+        "from PIL import Image\n",
+        "import torchvision.transforms as transforms"
+      ],
+      "metadata": {
+        "id": "A66NdVnWuWCv"
+      },
+      "execution_count": 9,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "spacy_eng = spacy.load(\"en_core_web_sm\")"
+      ],
+      "metadata": {
+        "id": "Gih9tyHp-jwa"
+      },
+      "execution_count": 10,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "class Vocabulary:\n",
+        "  def __init__(self,freq_thresh):\n",
+        "    self.itos = {0: \"<PAD>\", 1: \"<SOS>\", 2: \"<EOS>\", 3: \"<UNK>\"}\n",
+        "    self.stoi = {\"<PAD>\": 0, \"<SOS>\": 1, \"<EOS>\": 2, \"<UNK>\": 3}\n",
+        "    self.freq_thresh = freq_thresh\n",
+        "  \n",
+        "  def __len__(self):\n",
+        "    return len(self.itos)\n",
+        "  \n",
+        "  @staticmethod\n",
+        "  def tokenizer_eng(text):\n",
+        "    return [tok.text.lower() for tok in spacy_eng.tokenizer(text)]\n",
+        "  \n",
+        "  def build_vocabulary(self,sentence_list):\n",
+        "    frequencies = {}\n",
+        "    idx = 4\n",
+        "\n",
+        "    for sentence in sentence_list:\n",
+        "      for word in self.tokenizer_eng(sentence):\n",
+        "        if word not in frequencies:\n",
+        "          frequencies[word] = 1\n",
+        "        else:\n",
+        "          frequencies[word] += 1\n",
+        "        \n",
+        "        if frequencies[word] == self.freq_thresh:\n",
+        "          self.stoi[word] = idx\n",
+        "          self.itos[idx] = word\n",
+        "          idx = idx + 1\n",
+        "  \n",
+        "  def numericalize(self,text):\n",
+        "    tokenized_text = self.tokenizer_eng(text)\n",
+        "\n",
+        "    return [\n",
+        "        self.stoi[token] if token in self.stoi else self.stoi[\"<UNK>\"]\n",
+        "        for token in tokenized_text\n",
+        "    ]"
+      ],
+      "metadata": {
+        "id": "uEMO4Kjp-nxL"
+      },
+      "execution_count": 11,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "class FlickrDataset(Dataset):\n",
+        "  def __init__(self,root_dir,captions_file,transform = None, freq_thresh = 5):\n",
+        "    self.root_dir = root_dir\n",
+        "    self.df = pd.read_csv(captions_file)\n",
+        "    self.transform = transform\n",
+        "\n",
+        "    self.imgs = self.df[\"image\"]\n",
+        "    self.captions = self.df['caption']\n",
+        "\n",
+        "    self.vocab = Vocabulary(freq_thresh)\n",
+        "    self.vocab.build_vocabulary(self.captions.tolist())\n",
+        "  \n",
+        "  def __len__(self):\n",
+        "    return len(self.df)\n",
+        "  \n",
+        "  def __getitem__(self,index):\n",
+        "    caption = self.captions[index]\n",
+        "    img_id = self.imgs[index]\n",
+        "    img = Image.open(os.path.join(self.root_dir,img_id)).convert(\"RGB\")\n",
+        "\n",
+        "    if self.transform is not None:\n",
+        "      img = self.transform(img)\n",
+        "    \n",
+        "    numericalized_caption = [self.vocab.stoi[\"<SOS>\"]]\n",
+        "    numericalized_caption += self.vocab.numericalize(caption)\n",
+        "    numericalized_caption.append(self.vocab.stoi[\"<EOS>\"])\n",
+        "\n",
+        "    return img, torch.tensor(numericalized_caption)"
+      ],
+      "metadata": {
+        "id": "Q2u7DUYyBAHB"
+      },
+      "execution_count": 33,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "class MyCollate:\n",
+        "  def __init__(self,pad_idx):\n",
+        "    self.pad_idx = pad_idx\n",
+        "  \n",
+        "  def __call__(self,batch):\n",
+        "    imgs = [item[0].unsqueeze(0) for item in batch]\n",
+        "    imgs = torch.cat(imgs,dim = 0)\n",
+        "    targets = [item[1] for item in batch]\n",
+        "    targets = pad_sequence(targets,batch_first = False, padding_value = self.pad_idx)\n",
+        "\n",
+        "    return imgs, targets"
+      ],
+      "metadata": {
+        "id": "RjkfEB49CViR"
+      },
+      "execution_count": 34,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "def get_loader(root,annotation_file,transform,batch_size = 32,num_workers = 8,shuffle = True, pin_memory = True):\n",
+        "  dataset = FlickrDataset(root,annotation_file,transform = transform)\n",
+        "\n",
+        "  pad_idx = dataset.vocab.stoi[\"<PAD>\"]\n",
+        "  loader = DataLoader(\n",
+        "      dataset = dataset,\n",
+        "      batch_size = batch_size,\n",
+        "      num_workers = num_workers,\n",
+        "      pin_memory = pin_memory,\n",
+        "      shuffle = shuffle,\n",
+        "      collate_fn = MyCollate(pad_idx = pad_idx)\n",
+        "  )\n",
+        "\n",
+        "  return loader, dataset"
+      ],
+      "metadata": {
+        "id": "-cI_5WGvDB3S"
+      },
+      "execution_count": 35,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "transform = transforms.Compose(\n",
+        "    [transforms.Resize((224,224)), transforms.ToTensor()]\n",
+        ")\n",
+        "\n",
+        "loader, dataset = get_loader(\n",
+        "    \"./flickr8k/images/\",\n",
+        "    \"./flickr8k/captions.txt\",\n",
+        "    transform = transform\n",
+        ")"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "DR7rMw-TDoSy",
+        "outputId": "87c9555f-24b2-4d1d-f775-78e474bd1a35"
+      },
+      "execution_count": 36,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "/usr/local/lib/python3.7/dist-packages/torch/utils/data/dataloader.py:566: UserWarning: This DataLoader will create 8 worker processes in total. Our suggested max number of worker in current system is 2, which is smaller than what this DataLoader is going to create. Please be aware that excessive worker creation might get DataLoader running slow or even freeze, lower the worker number to avoid potential slowness/freeze if necessary.\n",
+            "  cpuset_checked))\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "for idx, (imgs, captions) in enumerate(loader):\n",
+        "  print(\"Image Shape\",imgs.shape)\n",
+        "  print(\"Captions Shape\",captions.shape)\n",
+        "  break"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "Ff6BgUDvERZ2",
+        "outputId": "7f2453ad-484f-44ed-8d7c-c494114a06df"
+      },
+      "execution_count": 37,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Image Shape torch.Size([32, 3, 224, 224])\n",
+            "Captions Shape torch.Size([24, 32])\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Helper Functions"
+      ],
+      "metadata": {
+        "id": "q_6mBIjdFyl1"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import torch\n",
+        "import torchvision.transforms as transforms\n",
+        "from PIL import Image"
+      ],
+      "metadata": {
+        "id": "kjJZIE4sEcFU"
+      },
+      "execution_count": 38,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "def print_examples(model,device,dataset):\n",
+        "  transform = transforms.Compose(\n",
+        "        [\n",
+        "            transforms.Resize((299, 299)),\n",
+        "            transforms.ToTensor(),\n",
+        "            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),\n",
+        "        ]\n",
+        "    )\n",
+        "  model.eval()\n",
+        "  test_img1 = transform(Image.open(\"./dog.jpg\").convert(\"RGB\")).unsqueeze(0)\n",
+        "  print(\"Example 1 CORRECT: Dog on a beach by the ocean\")\n",
+        "  print(\n",
+        "      \"Example 1 OUTPUT: \"\n",
+        "      + \" \".join(model.caption_image(test_img1.to(device), dataset.vocab))\n",
+        "  )\n",
+        "  test_img2 = transform(\n",
+        "      Image.open(\"./child.jpg\").convert(\"RGB\")\n",
+        "  ).unsqueeze(0)\n",
+        "  print(\"Example 2 CORRECT: Child holding red frisbee outdoors\")\n",
+        "  print(\n",
+        "      \"Example 2 OUTPUT: \"\n",
+        "      + \" \".join(model.caption_image(test_img2.to(device), dataset.vocab))\n",
+        "  )\n",
+        "  test_img3 = transform(Image.open(\"./bus.png\").convert(\"RGB\")).unsqueeze(\n",
+        "      0\n",
+        "  )\n",
+        "  print(\"Example 3 CORRECT: Bus driving by parked cars\")\n",
+        "  print(\n",
+        "      \"Example 3 OUTPUT: \"\n",
+        "      + \" \".join(model.caption_image(test_img3.to(device), dataset.vocab))\n",
+        "  )\n",
+        "  test_img4 = transform(\n",
+        "      Image.open(\"./boat.png\").convert(\"RGB\")\n",
+        "  ).unsqueeze(0)\n",
+        "  print(\"Example 4 CORRECT: A small boat in the ocean\")\n",
+        "  print(\n",
+        "      \"Example 4 OUTPUT: \"\n",
+        "      + \" \".join(model.caption_image(test_img4.to(device), dataset.vocab))\n",
+        "  )\n",
+        "  test_img5 = transform(\n",
+        "      Image.open(\"./horse.png\").convert(\"RGB\")\n",
+        "  ).unsqueeze(0)\n",
+        "  print(\"Example 5 CORRECT: A cowboy riding a horse in the desert\")\n",
+        "  print(\n",
+        "      \"Example 5 OUTPUT: \"\n",
+        "      + \" \".join(model.caption_image(test_img5.to(device), dataset.vocab))\n",
+        "  )\n",
+        "  model.train()"
+      ],
+      "metadata": {
+        "id": "z5vicTN9KVRI"
+      },
+      "execution_count": 39,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "def save_checkpoint(state,file_name = 'model_checkpoint.pth.tar'):\n",
+        "  print(\"************* Saving Model Checkpoint ***************************\")\n",
+        "  torch.save(state,file_name)"
+      ],
+      "metadata": {
+        "id": "imLC5scbKozO"
+      },
+      "execution_count": 40,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "def load_checkpoint(checkpoint, model, optimizer):\n",
+        "  print(\"************ Loading Checkpoint ************\")\n",
+        "  model.load_state_dict(checkpoint['state_dict'])\n",
+        "  optimizer.load_state_dict(checkpoint['optimizer'])\n",
+        "  step = checkpoint['step']\n",
+        "  return step"
+      ],
+      "metadata": {
+        "id": "hHZXyevmP9_s"
+      },
+      "execution_count": 41,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Defining the Model"
+      ],
+      "metadata": {
+        "id": "zqZ9HEAPf6aU"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import torch\n",
+        "import torch.nn as nn\n",
+        "import statistics\n",
+        "import torchvision.models as models"
+      ],
+      "metadata": {
+        "id": "ob8NSJVNQdpj"
+      },
+      "execution_count": 42,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "class EncoderCNN(nn.Module):\n",
+        "\n",
+        "  def __init__(self,embed_size,train_cnn = False):\n",
+        "    super(EncoderCNN,self).__init__()\n",
+        "\n",
+        "    self.train_cnn = train_cnn\n",
+        "    self.inception = models.inception_v3(pretrained = True, aux_logits = True)\n",
+        "    self.inception.fc = nn.Linear(self.inception.fc.in_features,embed_size)\n",
+        "    self.relu = nn.ReLU()\n",
+        "    self.times = []\n",
+        "    self.dropout = nn.Dropout(0.5)\n",
+        "\n",
+        "  def forward(self,images):\n",
+        "    features = self.inception(images)\n",
+        "    return self.dropout(self.relu(features[0]))"
+      ],
+      "metadata": {
+        "id": "AFX_3uFOgDW0"
+      },
+      "execution_count": 43,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "class DecoderRNN(nn.Module):\n",
+        "  \n",
+        "  def __init__(self,embed_size,hidden_size,vocab_size,num_layers):\n",
+        "    super(DecoderRNN,self).__init__()\n",
+        "    self.embed =  nn.Embedding(vocab_size,embed_size)\n",
+        "    self.lstm = nn.LSTM(embed_size,hidden_size,num_layers)\n",
+        "    self.linear = nn.Linear(hidden_size,vocab_size)\n",
+        "    self.dropout = nn.Dropout(0.5)\n",
+        "  \n",
+        "  def forward(self,features,captions):\n",
+        "    embeddings = self.dropout(self.embed(captions))\n",
+        "    embeddings = torch.cat((features.unsqueeze(0),embeddings),dim = 0)\n",
+        "    hiddens, _ = self.lstm(embeddings)\n",
+        "    outputs = self.linear(hiddens)\n",
+        "    return outputs"
+      ],
+      "metadata": {
+        "id": "fLxb9M4pg39m"
+      },
+      "execution_count": 44,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "class CNNtoRNN(nn.Module):\n",
+        "\n",
+        "  def __init__(self,embed_size,hidden_size,vocab_size,num_layers):\n",
+        "    super(CNNtoRNN,self).__init__()\n",
+        "    self.encoderCNN = EncoderCNN(embed_size)\n",
+        "    self.decoderRNN = DecoderRNN(embed_size,hidden_size,vocab_size,num_layers)\n",
+        "    \n",
+        "  def forward(self,images,captions):\n",
+        "    features = self.encoderCNN(images)\n",
+        "    outputs = self.decoderRNN(features,captions)\n",
+        "    return outputs\n",
+        "  \n",
+        "  def caption_image(self,image,vocabulary,max_len = 50):\n",
+        "    result_caption = []\n",
+        "\n",
+        "    with torch.no_grad():\n",
+        "      x = self.encoderCNN(image).unsqueeze(0)\n",
+        "      states = None\n",
+        "\n",
+        "      for _ in range(max_len):\n",
+        "        hiddens, states = self.decoderRNN.lstm(x,states)\n",
+        "        output = self.decoderRNN.linear(hiddens.squeeze(0))\n",
+        "        predicted = output.argmax(0)\n",
+        "        result_caption.append(predicted.item())\n",
+        "        x = self.decoderRNN.embed(predicted).unsqueeze(0)\n",
+        "        if vocabulary.itos[predicted.item()] == '<EOS>':\n",
+        "          break\n",
+        "    \n",
+        "    return [vocabulary.itos[idx] for idx in result_caption]"
+      ],
+      "metadata": {
+        "id": "3cbFwN69hyD1"
+      },
+      "execution_count": 45,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Model Training"
+      ],
+      "metadata": {
+        "id": "WpmfC0ZTj3FM"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import torch\n",
+        "from tqdm import tqdm\n",
+        "import torch.nn as nn\n",
+        "import torch.optim as optim\n",
+        "from torch.utils.tensorboard import SummaryWriter\n",
+        "import torchvision.transforms as transforms"
+      ],
+      "metadata": {
+        "id": "Yn0FzejJjeFU"
+      },
+      "execution_count": 46,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "def train():\n",
+        "  transform = transforms.Compose(\n",
+        "      [\n",
+        "        transforms.Resize((356,356)),\n",
+        "        transforms.RandomCrop((299,299)),\n",
+        "       transforms.ToTensor(),\n",
+        "       transforms.Normalize((0.5,0.5,0.5),(0.5,0.5,0.5))\n",
+        "      ]\n",
+        "  )\n",
+        "\n",
+        "  train_loader, dataset = get_loader(\n",
+        "      root = './flickr8k/images/',\n",
+        "      annotation_file = './flickr8k/captions.txt',\n",
+        "      transform = transform,\n",
+        "      num_workers = 2\n",
+        "  )\n",
+        "\n",
+        "  torch.backends.cudnn.benchmark = True\n",
+        "  device = torch.device(\"cuda\" if torch.cuda.is_available() else \"cpu\")\n",
+        "  load_model = False\n",
+        "  save_model = True\n",
+        "  train_cnn = False\n",
+        "\n",
+        "  embed_size = 256\n",
+        "  hidden_size = 256\n",
+        "  vocab_size = len(dataset.vocab)\n",
+        "  num_layers = 1\n",
+        "  learning_rate = 3e-4\n",
+        "  num_epochs = 20\n",
+        "\n",
+        "\n",
+        "  writer = SummaryWriter(\"./runs/flickr\")\n",
+        "  step = 0\n",
+        "  model = CNNtoRNN(embed_size,hidden_size,vocab_size,num_layers).to(device)\n",
+        "  criterion = nn.CrossEntropyLoss(ignore_index = dataset.vocab.stoi[\"<PAD>\"])\n",
+        "  optimizer = optim.Adam(model.parameters(),lr = learning_rate)\n",
+        "\n",
+        "  for name, param in model.encoderCNN.inception.named_parameters():\n",
+        "    if \"fc.weight\" in name or \"fc.bias\" in name:\n",
+        "      param.requires_grad = True\n",
+        "    else:\n",
+        "      param.required_grad = train_cnn\n",
+        "    \n",
+        "  if load_model:\n",
+        "    step = load_checkpoint(torch.load(\"model_checkpoint.pth.tar\"),model,optimizer)\n",
+        "  \n",
+        "  model.train()\n",
+        "\n",
+        "  for epoch in range(num_epochs):\n",
+        "\n",
+        "    print_examples(model, device, dataset)\n",
+        "\n",
+        "    print(\"<============Epoch=============>\",epoch)\n",
+        "    if save_model:\n",
+        "      checkpoint = {\n",
+        "          \"state_dict\": model.state_dict(),\n",
+        "          \"optimizer\": optimizer.state_dict(),\n",
+        "      }\n",
+        "      save_checkpoint(checkpoint)\n",
+        "\n",
+        "    for idx, (imgs,captions) in tqdm(enumerate(train_loader), total = len(train_loader), leave = True):\n",
+        "      imgs = imgs.to(device)\n",
+        "      captions = captions.to(device)\n",
+        "      outputs = model(imgs,captions[:-1])\n",
+        "      loss = criterion(outputs.reshape(-1,outputs.shape[2]),captions.reshape(-1))\n",
+        "      writer.add_scalar(\"Training Loss\",loss.item(),global_step = step)\n",
+        "\n",
+        "      optimizer.zero_grad()\n",
+        "      loss.backward(loss)\n",
+        "      optimizer.step()\n",
+        "    print(loss.item())\n",
+        "\n",
+        "  return model"
+      ],
+      "metadata": {
+        "id": "WwVEBRnmlW7q"
+      },
+      "execution_count": 53,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "model = train()"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "O2tASUyhtAZc",
+        "outputId": "91ca086b-38bc-4fd8-9839-7f4e4abf2691"
+      },
+      "execution_count": 54,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Example 1 CORRECT: Dog on a beach by the ocean\n",
+            "Example 1 OUTPUT: licking large throw rag they rag some headband ; punches pavement full concerned facial gather jacked bikes smile these skull cheerleader bathing pop pop close toe crosswalk gestures crane operating crane type makeup graduation themselves themselves playhouse necklace facial struggles spotlight alleyway railing shelter hike reach control sets outfits kid\n",
+            "Example 2 CORRECT: Child holding red frisbee outdoors\n",
+            "Example 2 OUTPUT: retrieves potato turquoise swan mess karate hole tire challenging helmeted helmeted snowmobile helmeted surfing marsh rough speaks hold out drawing powder itself mess located wearing store sitting skyline wheel mouthed they festival using facial does , bathroom enclosure enclosure guard seated busy metal raised silhouette fashion waist meadow medium puts\n",
+            "Example 3 CORRECT: Bus driving by parked cars\n",
+            "Example 3 OUTPUT: crown cellphone tracksuit outdoors santa stroller carts fans downhill these skull ticket ribbon operating displays drinking tossing piece piece frolics frisbee sells closes competition glasses these door these skull skull frolics 5 feeds raised silhouette fashion waist meadow medium handgun operating bubble great skinny brindle students touch parking parking parking\n",
+            "Example 4 CORRECT: A small boat in the ocean\n",
+            "Example 4 OUTPUT: crown cellphone tracksuit outdoors santa stroller carts fans downhill these skull ticket ribbon operating displays drinking tossing piece piece frolics frisbee sells closes competition glasses these door these skull skull frolics 5 feeds raised silhouette fashion waist meadow medium handgun operating bubble great skinny brindle students touch parking parking parking\n",
+            "Example 5 CORRECT: A cowboy riding a horse in the desert\n",
+            "Example 5 OUTPUT: outdoors read ladder stream hands grey sports skull frolics 5 feeds raised silhouette fashion waist meadow medium handgun operating bubble great skinny brindle students touch parking parking parking mittens act guitarist attire yelling attire yelling cat glove fans motorbikes eyed backpacking hikers motor sitting canyon cliffs boards quickly kicked blocking\n",
+            "<============Epoch=============> 0\n",
+            "************* Saving Model Checkpoint ***************************\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "100%|██████████| 1265/1265 [09:47<00:00,  2.15it/s]\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "3.661198854446411\n",
+            "Example 1 CORRECT: Dog on a beach by the ocean\n",
+            "Example 1 OUTPUT: <SOS> a man in a red shirt is standing on a red . <EOS>\n",
+            "Example 2 CORRECT: Child holding red frisbee outdoors\n",
+            "Example 2 OUTPUT: <SOS> a man in a red shirt is standing on a red . <EOS>\n",
+            "Example 3 CORRECT: Bus driving by parked cars\n",
+            "Example 3 OUTPUT: <SOS> a man in a red shirt is standing on a red . <EOS>\n",
+            "Example 4 CORRECT: A small boat in the ocean\n",
+            "Example 4 OUTPUT: <SOS> a man in a red shirt is standing on a red . <EOS>\n",
+            "Example 5 CORRECT: A cowboy riding a horse in the desert\n",
+            "Example 5 OUTPUT: <SOS> a man in a red shirt is standing on a red . <EOS>\n",
+            "<============Epoch=============> 1\n",
+            "************* Saving Model Checkpoint ***************************\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "100%|██████████| 1265/1265 [09:41<00:00,  2.17it/s]\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "3.5371503829956055\n",
+            "Example 1 CORRECT: Dog on a beach by the ocean\n",
+            "Example 1 OUTPUT: <SOS> a man in a red shirt is jumping over a <UNK> . <EOS>\n",
+            "Example 2 CORRECT: Child holding red frisbee outdoors\n",
+            "Example 2 OUTPUT: <SOS> a man in a red shirt is standing on a bench . <EOS>\n",
+            "Example 3 CORRECT: Bus driving by parked cars\n",
+            "Example 3 OUTPUT: <SOS> a man in a red shirt is standing on a bench . <EOS>\n",
+            "Example 4 CORRECT: A small boat in the ocean\n",
+            "Example 4 OUTPUT: <SOS> a man in a red shirt is jumping over a <UNK> . <EOS>\n",
+            "Example 5 CORRECT: A cowboy riding a horse in the desert\n",
+            "Example 5 OUTPUT: <SOS> a man in a red shirt is standing on a bench . <EOS>\n",
+            "<============Epoch=============> 2\n",
+            "************* Saving Model Checkpoint ***************************\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "100%|██████████| 1265/1265 [09:38<00:00,  2.19it/s]\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "3.089183807373047\n",
+            "Example 1 CORRECT: Dog on a beach by the ocean\n",
+            "Example 1 OUTPUT: <SOS> a dog is running through the grass . <EOS>\n",
+            "Example 2 CORRECT: Child holding red frisbee outdoors\n",
+            "Example 2 OUTPUT: <SOS> a man in a blue shirt and a black shirt is jumping over a <UNK> . <EOS>\n",
+            "Example 3 CORRECT: Bus driving by parked cars\n",
+            "Example 3 OUTPUT: <SOS> a man in a blue shirt and a woman in a blue shirt and a woman in a blue shirt and a woman in a blue shirt and a woman in a blue shirt and a woman in a blue shirt and a woman in a blue shirt and\n",
+            "Example 4 CORRECT: A small boat in the ocean\n",
+            "Example 4 OUTPUT: <SOS> a dog is running through the grass . <EOS>\n",
+            "Example 5 CORRECT: A cowboy riding a horse in the desert\n",
+            "Example 5 OUTPUT: <SOS> a man in a blue shirt and a black shirt is jumping over a <UNK> . <EOS>\n",
+            "<============Epoch=============> 3\n",
+            "************* Saving Model Checkpoint ***************************\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "100%|██████████| 1265/1265 [09:40<00:00,  2.18it/s]\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "3.252575397491455\n",
+            "Example 1 CORRECT: Dog on a beach by the ocean\n",
+            "Example 1 OUTPUT: <SOS> a dog is running through the grass . <EOS>\n",
+            "Example 2 CORRECT: Child holding red frisbee outdoors\n",
+            "Example 2 OUTPUT: <SOS> a man in a red shirt is jumping over a rock wall . <EOS>\n",
+            "Example 3 CORRECT: Bus driving by parked cars\n",
+            "Example 3 OUTPUT: <SOS> a man in a red shirt is standing on a bench . <EOS>\n",
+            "Example 4 CORRECT: A small boat in the ocean\n",
+            "Example 4 OUTPUT: <SOS> a dog is running through the grass . <EOS>\n",
+            "Example 5 CORRECT: A cowboy riding a horse in the desert\n",
+            "Example 5 OUTPUT: <SOS> a man in a red shirt is jumping over a rock wall . <EOS>\n",
+            "<============Epoch=============> 4\n",
+            "************* Saving Model Checkpoint ***************************\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "100%|██████████| 1265/1265 [09:40<00:00,  2.18it/s]\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "3.504249095916748\n",
+            "Example 1 CORRECT: Dog on a beach by the ocean\n",
+            "Example 1 OUTPUT: <SOS> a dog is running through the grass . <EOS>\n",
+            "Example 2 CORRECT: Child holding red frisbee outdoors\n",
+            "Example 2 OUTPUT: <SOS> a man in a red shirt is standing in front of a large crowd of people . <EOS>\n",
+            "Example 3 CORRECT: Bus driving by parked cars\n",
+            "Example 3 OUTPUT: <SOS> a man in a red shirt is standing in front of a <UNK> . <EOS>\n",
+            "Example 4 CORRECT: A small boat in the ocean\n",
+            "Example 4 OUTPUT: <SOS> a man in a black shirt and a black shirt is jumping over a rock wall . <EOS>\n",
+            "Example 5 CORRECT: A cowboy riding a horse in the desert\n",
+            "Example 5 OUTPUT: <SOS> a man in a red shirt is jumping over a rock wall . <EOS>\n",
+            "<============Epoch=============> 5\n",
+            "************* Saving Model Checkpoint ***************************\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "100%|██████████| 1265/1265 [09:40<00:00,  2.18it/s]\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "2.541201591491699\n",
+            "Example 1 CORRECT: Dog on a beach by the ocean\n",
+            "Example 1 OUTPUT: <SOS> a dog is running through the grass . <EOS>\n",
+            "Example 2 CORRECT: Child holding red frisbee outdoors\n",
+            "Example 2 OUTPUT: <SOS> a man in a red shirt and a black shirt is standing on a bench . <EOS>\n",
+            "Example 3 CORRECT: Bus driving by parked cars\n",
+            "Example 3 OUTPUT: <SOS> a man in a red shirt and a black shirt is standing on a bench . <EOS>\n",
+            "Example 4 CORRECT: A small boat in the ocean\n",
+            "Example 4 OUTPUT: <SOS> a man in a black wetsuit is riding a bike on a dirt bike . <EOS>\n",
+            "Example 5 CORRECT: A cowboy riding a horse in the desert\n",
+            "Example 5 OUTPUT: <SOS> a man in a black shirt and a black shirt is jumping over a rock wall . <EOS>\n",
+            "<============Epoch=============> 6\n",
+            "************* Saving Model Checkpoint ***************************\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "100%|██████████| 1265/1265 [09:40<00:00,  2.18it/s]\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "3.2541821002960205\n",
+            "Example 1 CORRECT: Dog on a beach by the ocean\n",
+            "Example 1 OUTPUT: <SOS> a dog is running through the snow . <EOS>\n",
+            "Example 2 CORRECT: Child holding red frisbee outdoors\n",
+            "Example 2 OUTPUT: <SOS> a man in a blue shirt is standing on a bench with a woman in a black jacket . <EOS>\n",
+            "Example 3 CORRECT: Bus driving by parked cars\n",
+            "Example 3 OUTPUT: <SOS> a man in a blue shirt is standing on a bench . <EOS>\n",
+            "Example 4 CORRECT: A small boat in the ocean\n",
+            "Example 4 OUTPUT: <SOS> a man is riding a bike on a dirt bike . <EOS>\n",
+            "Example 5 CORRECT: A cowboy riding a horse in the desert\n",
+            "Example 5 OUTPUT: <SOS> a man in a black wetsuit is riding a bike on a bike . <EOS>\n",
+            "<============Epoch=============> 7\n",
+            "************* Saving Model Checkpoint ***************************\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "100%|██████████| 1265/1265 [09:40<00:00,  2.18it/s]\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "2.516913652420044\n",
+            "Example 1 CORRECT: Dog on a beach by the ocean\n",
+            "Example 1 OUTPUT: <SOS> a dog is running through the grass . <EOS>\n",
+            "Example 2 CORRECT: Child holding red frisbee outdoors\n",
+            "Example 2 OUTPUT: <SOS> a man in a red shirt and a black shirt is holding a sign . <EOS>\n",
+            "Example 3 CORRECT: Bus driving by parked cars\n",
+            "Example 3 OUTPUT: <SOS> a group of people are sitting on a bench . <EOS>\n",
+            "Example 4 CORRECT: A small boat in the ocean\n",
+            "Example 4 OUTPUT: <SOS> a man in a black wetsuit is surfing on a rock . <EOS>\n",
+            "Example 5 CORRECT: A cowboy riding a horse in the desert\n",
+            "Example 5 OUTPUT: <SOS> a man in a black wetsuit is surfing on a rock . <EOS>\n",
+            "<============Epoch=============> 8\n",
+            "************* Saving Model Checkpoint ***************************\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "100%|██████████| 1265/1265 [09:41<00:00,  2.18it/s]\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "2.6402547359466553\n",
+            "Example 1 CORRECT: Dog on a beach by the ocean\n",
+            "Example 1 OUTPUT: <SOS> a dog is running through a field of grass . <EOS>\n",
+            "Example 2 CORRECT: Child holding red frisbee outdoors\n",
+            "Example 2 OUTPUT: <SOS> a young girl in a pink shirt and a blue shirt is playing with a ball in a park . <EOS>\n",
+            "Example 3 CORRECT: Bus driving by parked cars\n",
+            "Example 3 OUTPUT: <SOS> a man in a red shirt and a hat is standing on a bench . <EOS>\n",
+            "Example 4 CORRECT: A small boat in the ocean\n",
+            "Example 4 OUTPUT: <SOS> a man is standing on a rock with a dog in the snow . <EOS>\n",
+            "Example 5 CORRECT: A cowboy riding a horse in the desert\n",
+            "Example 5 OUTPUT: <SOS> a man is standing on a rock with a dog in the snow . <EOS>\n",
+            "<============Epoch=============> 9\n",
+            "************* Saving Model Checkpoint ***************************\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "100%|██████████| 1265/1265 [09:41<00:00,  2.17it/s]\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "2.3671178817749023\n",
+            "Example 1 CORRECT: Dog on a beach by the ocean\n",
+            "Example 1 OUTPUT: <SOS> a brown dog is running through the grass . <EOS>\n",
+            "Example 2 CORRECT: Child holding red frisbee outdoors\n",
+            "Example 2 OUTPUT: <SOS> a young boy in a red shirt is playing with a ball in his mouth . <EOS>\n",
+            "Example 3 CORRECT: Bus driving by parked cars\n",
+            "Example 3 OUTPUT: <SOS> a man in a red shirt is standing on a bench with a man in a blue shirt and a woman in a black jacket . <EOS>\n",
+            "Example 4 CORRECT: A small boat in the ocean\n",
+            "Example 4 OUTPUT: <SOS> a man in a red shirt is surfing on a rock . <EOS>\n",
+            "Example 5 CORRECT: A cowboy riding a horse in the desert\n",
+            "Example 5 OUTPUT: <SOS> a man in a red shirt is riding a bike on a dirt bike . <EOS>\n",
+            "<============Epoch=============> 10\n",
+            "************* Saving Model Checkpoint ***************************\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "100%|██████████| 1265/1265 [09:42<00:00,  2.17it/s]\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "2.3556997776031494\n",
+            "Example 1 CORRECT: Dog on a beach by the ocean\n",
+            "Example 1 OUTPUT: <SOS> a dog is running through a field of grass . <EOS>\n",
+            "Example 2 CORRECT: Child holding red frisbee outdoors\n",
+            "Example 2 OUTPUT: <SOS> a young boy in a red shirt is jumping into a pool . <EOS>\n",
+            "Example 3 CORRECT: Bus driving by parked cars\n",
+            "Example 3 OUTPUT: <SOS> a group of people are standing in front of a large building . <EOS>\n",
+            "Example 4 CORRECT: A small boat in the ocean\n",
+            "Example 4 OUTPUT: <SOS> a man is riding a bicycle on a dirt path . <EOS>\n",
+            "Example 5 CORRECT: A cowboy riding a horse in the desert\n",
+            "Example 5 OUTPUT: <SOS> a man is riding a bicycle on a dirt bike . <EOS>\n",
+            "<============Epoch=============> 11\n",
+            "************* Saving Model Checkpoint ***************************\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "100%|██████████| 1265/1265 [09:42<00:00,  2.17it/s]\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "2.2750473022460938\n",
+            "Example 1 CORRECT: Dog on a beach by the ocean\n",
+            "Example 1 OUTPUT: <SOS> a dog is running through a field . <EOS>\n",
+            "Example 2 CORRECT: Child holding red frisbee outdoors\n",
+            "Example 2 OUTPUT: <SOS> a little girl in a pink shirt and blue jeans is jumping in the air . <EOS>\n",
+            "Example 3 CORRECT: Bus driving by parked cars\n",
+            "Example 3 OUTPUT: <SOS> a man in a blue shirt is standing on a rock with a man in a blue shirt and a black shirt . <EOS>\n",
+            "Example 4 CORRECT: A small boat in the ocean\n",
+            "Example 4 OUTPUT: <SOS> a man in a yellow shirt is riding a bike on a dirt bike . <EOS>\n",
+            "Example 5 CORRECT: A cowboy riding a horse in the desert\n",
+            "Example 5 OUTPUT: <SOS> a man in a yellow shirt is riding a bike on a dirt bike . <EOS>\n",
+            "<============Epoch=============> 12\n",
+            "************* Saving Model Checkpoint ***************************\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "100%|██████████| 1265/1265 [09:44<00:00,  2.16it/s]\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "2.7187304496765137\n",
+            "Example 1 CORRECT: Dog on a beach by the ocean\n",
+            "Example 1 OUTPUT: <SOS> a dog is running through a field of grass . <EOS>\n",
+            "Example 2 CORRECT: Child holding red frisbee outdoors\n",
+            "Example 2 OUTPUT: <SOS> a little boy in a red shirt is playing with a ball in his mouth . <EOS>\n",
+            "Example 3 CORRECT: Bus driving by parked cars\n",
+            "Example 3 OUTPUT: <SOS> a man in a red shirt is standing on a bench with a man in a blue shirt and a black hat . <EOS>\n",
+            "Example 4 CORRECT: A small boat in the ocean\n",
+            "Example 4 OUTPUT: <SOS> a man is climbing a rock wall . <EOS>\n",
+            "Example 5 CORRECT: A cowboy riding a horse in the desert\n",
+            "Example 5 OUTPUT: <SOS> a man in a black wetsuit is riding a bike on a dirt bike . <EOS>\n",
+            "<============Epoch=============> 13\n",
+            "************* Saving Model Checkpoint ***************************\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "100%|██████████| 1265/1265 [09:31<00:00,  2.21it/s]\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "2.2831625938415527\n",
+            "Example 1 CORRECT: Dog on a beach by the ocean\n",
+            "Example 1 OUTPUT: <SOS> a dog is running through the grass . <EOS>\n",
+            "Example 2 CORRECT: Child holding red frisbee outdoors\n",
+            "Example 2 OUTPUT: <SOS> a little girl in a pink shirt is playing with a ball . <EOS>\n",
+            "Example 3 CORRECT: Bus driving by parked cars\n",
+            "Example 3 OUTPUT: <SOS> a man in a red shirt is standing on a sidewalk with a man in a blue shirt . <EOS>\n",
+            "Example 4 CORRECT: A small boat in the ocean\n",
+            "Example 4 OUTPUT: <SOS> a man is climbing a rock wall . <EOS>\n",
+            "Example 5 CORRECT: A cowboy riding a horse in the desert\n",
+            "Example 5 OUTPUT: <SOS> two people are standing on a rock overlooking the ocean . <EOS>\n",
+            "<============Epoch=============> 14\n",
+            "************* Saving Model Checkpoint ***************************\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "100%|██████████| 1265/1265 [09:28<00:00,  2.22it/s]\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "2.6055212020874023\n",
+            "Example 1 CORRECT: Dog on a beach by the ocean\n",
+            "Example 1 OUTPUT: <SOS> a dog is running through a grassy field . <EOS>\n",
+            "Example 2 CORRECT: Child holding red frisbee outdoors\n",
+            "Example 2 OUTPUT: <SOS> a young boy in a red shirt is jumping off a swing . <EOS>\n",
+            "Example 3 CORRECT: Bus driving by parked cars\n",
+            "Example 3 OUTPUT: <SOS> a man in a red shirt is standing on a sidewalk with a man in a black shirt . <EOS>\n",
+            "Example 4 CORRECT: A small boat in the ocean\n",
+            "Example 4 OUTPUT: <SOS> a man is riding a bike on a dirt track . <EOS>\n",
+            "Example 5 CORRECT: A cowboy riding a horse in the desert\n",
+            "Example 5 OUTPUT: <SOS> a man in a black shirt and jeans is riding a bike on a dirt bike . <EOS>\n",
+            "<============Epoch=============> 15\n",
+            "************* Saving Model Checkpoint ***************************\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "100%|██████████| 1265/1265 [09:29<00:00,  2.22it/s]\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "2.1913812160491943\n",
+            "Example 1 CORRECT: Dog on a beach by the ocean\n",
+            "Example 1 OUTPUT: <SOS> a dog is jumping over a hurdle . <EOS>\n",
+            "Example 2 CORRECT: Child holding red frisbee outdoors\n",
+            "Example 2 OUTPUT: <SOS> a little girl in a pink shirt and blue jeans is jumping on a trampoline . <EOS>\n",
+            "Example 3 CORRECT: Bus driving by parked cars\n",
+            "Example 3 OUTPUT: <SOS> a man in a red shirt is standing on a sidewalk with a <UNK> in his hand . <EOS>\n",
+            "Example 4 CORRECT: A small boat in the ocean\n",
+            "Example 4 OUTPUT: <SOS> a man in a red jacket is climbing a rock face . <EOS>\n",
+            "Example 5 CORRECT: A cowboy riding a horse in the desert\n",
+            "Example 5 OUTPUT: <SOS> a man in a red jacket and black pants is standing on a rocky ledge . <EOS>\n",
+            "<============Epoch=============> 16\n",
+            "************* Saving Model Checkpoint ***************************\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "100%|██████████| 1265/1265 [09:29<00:00,  2.22it/s]\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "2.322721004486084\n",
+            "Example 1 CORRECT: Dog on a beach by the ocean\n",
+            "Example 1 OUTPUT: <SOS> a dog jumps over a hurdle . <EOS>\n",
+            "Example 2 CORRECT: Child holding red frisbee outdoors\n",
+            "Example 2 OUTPUT: <SOS> a young boy is playing with a ball in a field . <EOS>\n",
+            "Example 3 CORRECT: Bus driving by parked cars\n",
+            "Example 3 OUTPUT: <SOS> a man in a black shirt and a woman in a white shirt and a white shirt and a white shirt and a white shirt and a white shirt and a white shirt and a white shirt and a white shirt and a white shirt and a white shirt\n",
+            "Example 4 CORRECT: A small boat in the ocean\n",
+            "Example 4 OUTPUT: <SOS> a man is climbing a rock wall . <EOS>\n",
+            "Example 5 CORRECT: A cowboy riding a horse in the desert\n",
+            "Example 5 OUTPUT: <SOS> a man and a woman are standing in front of a waterfall . <EOS>\n",
+            "<============Epoch=============> 17\n",
+            "************* Saving Model Checkpoint ***************************\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "100%|██████████| 1265/1265 [09:29<00:00,  2.22it/s]\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "2.3344695568084717\n",
+            "Example 1 CORRECT: Dog on a beach by the ocean\n",
+            "Example 1 OUTPUT: <SOS> a dog is running through a field . <EOS>\n",
+            "Example 2 CORRECT: Child holding red frisbee outdoors\n",
+            "Example 2 OUTPUT: <SOS> a little girl in a pink shirt is playing with a hula hoop . <EOS>\n",
+            "Example 3 CORRECT: Bus driving by parked cars\n",
+            "Example 3 OUTPUT: <SOS> a man in a red jacket and a black hat is standing in front of a crowd of people . <EOS>\n",
+            "Example 4 CORRECT: A small boat in the ocean\n",
+            "Example 4 OUTPUT: <SOS> a person is climbing a rock face . <EOS>\n",
+            "Example 5 CORRECT: A cowboy riding a horse in the desert\n",
+            "Example 5 OUTPUT: <SOS> two people are walking through the snow . <EOS>\n",
+            "<============Epoch=============> 18\n",
+            "************* Saving Model Checkpoint ***************************\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "100%|██████████| 1265/1265 [09:29<00:00,  2.22it/s]\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "2.5434348583221436\n",
+            "Example 1 CORRECT: Dog on a beach by the ocean\n",
+            "Example 1 OUTPUT: <SOS> a dog is running through a field of grass . <EOS>\n",
+            "Example 2 CORRECT: Child holding red frisbee outdoors\n",
+            "Example 2 OUTPUT: <SOS> a young boy wearing a blue shirt is jumping off a swing . <EOS>\n",
+            "Example 3 CORRECT: Bus driving by parked cars\n",
+            "Example 3 OUTPUT: <SOS> a man in a black shirt and a woman in a white shirt and a woman in a black shirt and a white shirt and a black shirt and a white shirt and a white shirt and a white shirt and a white shirt and a white shirt and\n",
+            "Example 4 CORRECT: A small boat in the ocean\n",
+            "Example 4 OUTPUT: <SOS> a man is climbing a rock face . <EOS>\n",
+            "Example 5 CORRECT: A cowboy riding a horse in the desert\n",
+            "Example 5 OUTPUT: <SOS> two people are standing on a snowy mountain . <EOS>\n",
+            "<============Epoch=============> 19\n",
+            "************* Saving Model Checkpoint ***************************\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "100%|██████████| 1265/1265 [09:29<00:00,  2.22it/s]"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "2.7270774841308594\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "transform = transforms.Compose(\n",
+        "        [\n",
+        "            transforms.Resize((299, 299)),\n",
+        "            transforms.ToTensor(),\n",
+        "            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),\n",
+        "        ]\n",
+        "    )\n",
+        "model.eval()\n",
+        "device = torch.device(\"cuda\" if torch.cuda.is_available() else \"cpu\")\n",
+        "test_img1 = transform(Image.open(\"./boat.png\").convert(\"RGB\")).unsqueeze(0)\n",
+        "model.caption_image(test_img1.to(device), dataset.vocab)"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "fxxLLHCobIyr",
+        "outputId": "1e75cb11-cf7c-41a4-ffda-fe0187e9d47b"
+      },
+      "execution_count": 61,
+      "outputs": [
+        {
+          "output_type": "execute_result",
+          "data": {
+            "text/plain": [
+              "['<SOS>',\n",
+              " 'a',\n",
+              " 'man',\n",
+              " 'is',\n",
+              " 'standing',\n",
+              " 'on',\n",
+              " 'a',\n",
+              " 'mountain',\n",
+              " 'with',\n",
+              " 'a',\n",
+              " 'mountain',\n",
+              " 'in',\n",
+              " 'the',\n",
+              " 'background',\n",
+              " '.',\n",
+              " '<EOS>']"
+            ]
+          },
+          "metadata": {},
+          "execution_count": 61
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [],
+      "metadata": {
+        "id": "yeLL5aTbW7Pr"
+      },
+      "execution_count": null,
+      "outputs": []
+    }
+  ]
+}
